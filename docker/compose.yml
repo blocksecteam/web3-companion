@@ -1,0 +1,48 @@
+name: web3-companion-${WEB3_PORT:-8081}
+
+services:
+  web3:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: web3-companion:latest
+    ports:
+      - "127.0.0.1:${WEB3_PORT:-8081}:8081"
+    environment:
+      HOME: /home/web3
+      WEB3_WORKDIR: /home/web3
+      CLAUDE_CODE_EXECUTABLE: /usr/local/bin/claude
+      WEB3_CONFIG_PATH: /opt/web3/config.toml
+      WEB3_EXTERNAL_URL: ${WEB3_EXTERNAL_URL:-http://localhost:${WEB3_PORT:-8081}}
+      WEB3_API_URL: http://127.0.0.1:8081
+      WEB3_UID: ${WEB3_UID:-1000}
+      WEB3_GID: ${WEB3_GID:-1000}
+      AWS_REGION: ${AWS_REGION:-}
+      AWS_KMS_KEY_ID: ${AWS_KMS_KEY_ID:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      WEB3_SSM_KEY: ${WEB3_SSM_KEY:-}
+      WEB3_JWT_SECRET: ${WEB3_JWT_SECRET:-}
+      WEB3_ALLOWED_ORIGINS: ${WEB3_ALLOWED_ORIGINS:-}
+      WEB3_RP_ID: ${WEB3_RP_ID:-}
+      WEB3_RP_NAME: ${WEB3_RP_NAME:-}
+      WEB3_RP_ORIGIN: ${WEB3_RP_ORIGIN:-}
+      WEB3_LLM_PROVIDER: ${WEB3_LLM_PROVIDER:-}
+      WEB3_LLM_BASE_URL: ${WEB3_LLM_BASE_URL:-}
+      WEB3_LLM_MODEL: ${WEB3_LLM_MODEL:-}
+      WEB3_LLM_API_KEY: ${WEB3_LLM_API_KEY:-}
+      WEB3_RPC_ETHEREUM_URL: ${WEB3_RPC_ETHEREUM_URL:-}
+      WEB3_RPC_BASE_URL: ${WEB3_RPC_BASE_URL:-}
+      WEB3_RPC_POLYGON_URL: ${WEB3_RPC_POLYGON_URL:-}
+      WEB3_RPC_BSC_URL: ${WEB3_RPC_BSC_URL:-}
+      PORTALS_API_KEY: ${PORTALS_API_KEY:-}
+      METASLEUTH_API_KEY: ${METASLEUTH_API_KEY:-}
+    volumes:
+      - ${WEB3_DATA_DIR:-./data-${WEB3_PORT:-8081}}:/home/web3
+    healthcheck:
+      test: ["CMD", "bun", "-e", "const r=await fetch('http://127.0.0.1:8081/health'); if(!r.ok) process.exit(1)"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped

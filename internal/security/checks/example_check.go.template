@@ -1,0 +1,345 @@
+// Template for a new static security check. To use:
+//   1. Copy this file and rename to <rule>.go (where <rule> is the Rule() id,
+//      e.g. unlimited_approval.go).
+//   2. Rename the ExampleCheck struct to a noun in PascalCase (e.g.
+//      UnlimitedApproval).
+//   3. Pick the right interface (see "Picking an interface" below) and adjust
+//      the Run() signature.
+//   4. Fill Rule(), AppliesTo(), Description(), Run() with real values.
+//   5. Register the struct in common.go's RegisterDefaultChecks with the
+//      matching reg.RegisterXxx() call. Use the security-check-register
+//      skill to walk the registration.
+//
+// ============================================================
+// Static Check Development Guide
+// ============================================================
+//
+// A check is a Go struct that implements ONE of the six typed Check
+// interfaces in internal/security/check.go. The interface a check
+// implements declares the phase it runs in AND the data its Run() method
+// can read (encoded by the Context type the interface takes).
+//
+// The orchestrator runs phases in this order:
+//
+//   Shape          → ShapeCheck.Run(ShapeContext)
+//   DataProducing  → DataProducingCheck.Run(ShapeContext) (CheckResult, []Operation)
+//   Calldata       → CalldataCheck.Run(CalldataContext)
+//   LabelEmitting  → LabelEmittingCheck.Run(SimulationContext) (CheckResult, []AddressLabel)
+//   Simulation     → SimulationCheck.Run(SimulationContext)
+//   Effect         → EffectCheck.Run(EffectContext)        // gated; only when sim succeeds
+//
+// What each Context exposes — read this before picking an interface
+//
+// Each Context type is an upper-bound chain: every later phase has all the
+// earlier phase's fields plus more. The compiler enforces that your Run()
+// only reads what its Context exposes.
+//
+// Running example for every section below: the user is signing a transfer
+// of 1 USDC on Ethereum to 0x97d6… via ERC-7821 batch execute.
+//
+// ─── ShapeContext (raw request fields) ───
+//
+// Equivalent to: "the bytes that came in from the user before anything
+// was parsed". Useful for shape validation, malformed-input rejection,
+// or anything that doesn't need to know what the calldata DOES.
+//
+//   c.Ctx     context.Context   — for cancellation and trace propagation
+//   c.Cfg     SecurityConfig    — thresholds (MaxGasUSD, MaxUSDValueLossBPS)
+//                                  and chain-specific known-router whitelist
+//   c.Req     CheckRequest      — the raw security check request:
+//       Req.Chain      "ethereum"
+//       Req.ChainID    1
+//       Req.Owner      "0xd8dA…" (the smart account owner)
+//       Req.To         "0x3fC9…" (router or recipient, NOT decoded)
+//       Req.Value      "0" (string wei to attach to the outer call)
+//       Req.Data       "0xe9ae5c53…" (the raw ERC-7821 execute calldata)
+//       Req.GasLimit   300000
+//       Req.GasPrice   "1000000000"
+//       Req.TxType     "swap" / "bridge" / "transfer" / etc.
+//       Req.SummaryJSON the tx-type-specific summary (JSON string)
+//
+// ─── CalldataContext (ShapeContext + decoded operations) ───
+//
+// Embeds ShapeContext plus the parsed [list of] inner call(s). This is
+// what the calldata decode phase produces. Use when the rule needs to
+// inspect what each individual sub-call DOES.
+//
+//   c.Ops     []Operation       — one element per inner call inside the
+//                                  ERC-7821 batch; or a single-element slice
+//                                  for a direct (non-batched) tx.
+//       Op.To     common.Address  — call target (e.g. USDC contract)
+//       Op.Value  *big.Int        — wei attached to this inner call
+//       Op.Data   []byte          — calldata for this inner call (e.g.
+//                                    selector 0xa9059cbb + transfer args)
+//
+// For the running USDC transfer example, c.Ops would have one entry with
+// To = USDC contract, Value = 0, Data = bytes for transfer(0x97d6, 1e6).
+//
+// ─── SimulationContext (CalldataContext + simulator output + labels) ───
+//
+// Embeds CalldataContext. Adds whatever the simulator returned (trace,
+// balance changes, gas used) plus the addresses involved in fund flow.
+// Use when the rule needs to reason about runtime behaviour, not just
+// the static intent.
+//
+//   c.Sim       *SimulationResult — guard against nil before dereferencing.
+//                                    Also guard Sim.Code != 0 (see "Defensive
+//                                    guards" below) — Sim.Data CAN be non-nil
+//                                    on a failed simulation (the simulator
+//                                    often returns the partial pre-revert
+//                                    call chain), and judging a half-trace
+//                                    as if it were complete produces
+//                                    misleading fails.
+//       Sim.Code      0 on success, non-zero on simulator failure
+//       Sim.Data      *SimulationData (may be non-nil even when Code != 0 —
+//                     partial pre-revert state; do NOT trust its contents
+//                     unless Code == 0)
+//           Data.Status         bool (false when the EVM reverted)
+//           Data.TransactionFee "21000000000000" (wei)
+//           Data.GasUsed        int64
+//           Data.BalanceChanges []BalanceChange — per-account asset deltas
+//                                  (e.g. owner: -1 USDC; recipient: +1 USDC)
+//           Data.Trace          *SimulationCall — full call tree from the
+//                                  simulator, including nested calls
+//   c.FundFlow  []string          — owner-relevant addresses discovered
+//                                    in the simulator trace; LabelEmitting
+//                                    checks query labels for each.
+//   c.Labels    []AddressLabel    — populated by LabelEmittingChecks
+//                                    earlier in the simulation sub-phase;
+//                                    later SimulationChecks see these
+//                                    annotations attached to Sim.Data.Trace.
+//
+// ─── EffectContext (SimulationContext + extracted TxEffect) ───
+//
+// Embeds SimulationContext. Adds a curated TxEffect derived from the
+// simulation: just the owner's USD inflow / outflow / gas. This phase only
+// runs when the simulation succeeded; Effect is guaranteed non-nil.
+//
+//   c.Effect  *TxEffect           — owner-centric USD summary:
+//       Effect.Spending           []AssetEffect (what the owner sent)
+//       Effect.Receiving          []AssetEffect (what the owner received)
+//       Effect.TotalSpendingUSD   *string — sum across Spending
+//       Effect.TotalReceivingUSD  *string — sum across Receiving
+//       Effect.GasUSD             *string — fee in USD
+//       Effect.NetUSD             *string — receiving - spending (- gas)
+//   AssetEffect.TokenAddress / Amount / USDValue / Receiving (direction).
+//
+// For the USDC transfer example, Effect.Spending has the 1 USDC outflow,
+// Effect.Receiving is empty (the owner is the sender, not the receiver).
+//
+// ─── Side-data producers ───
+//
+// Two of the six interfaces produce data the orchestrator threads into a
+// later phase's Context:
+//
+//   DataProducingCheck   reads ShapeContext, returns also []Operation
+//                        → orchestrator stores in CalldataContext.Ops
+//                        → built-in CalldataDecode does this; user checks
+//                          almost never should
+//
+//   LabelEmittingCheck   reads SimulationContext, returns also
+//                        []AddressLabel → orchestrator accumulates into
+//                        SimulationContext.Labels and attaches to the
+//                        trace before regular SimulationChecks run
+//
+// Picking an interface — answer two questions:
+//
+//   1. What data does my judgement need?
+//      - Raw request fields only (Req, Cfg)            → ShapeCheck
+//      - Decoded operations (Ops) too                  → CalldataCheck
+//      - Simulator output (Sim, FundFlow) too          → SimulationCheck
+//      - USD-converted effect summary (Effect) too     → EffectCheck
+//
+//   2. Does my rule ALSO produce side data downstream phases consume?
+//      - Yes, I produce []Operation                    → DataProducingCheck
+//      - Yes, I produce []AddressLabel                 → LabelEmittingCheck
+//      - No, just a CheckResult                        → pick from the four above
+//
+// Required methods on every Check:
+//   Rule()        Returns the unique snake_case rule id, e.g. "unlimited_approval"
+//   AppliesTo()   Returns nil for "applies to every tx_type", or a whitelist
+//                 like []string{"swap", "bridge"} to scope the rule
+//   Description() Returns a populated RuleDescription (Name, Description,
+//                 Statuses) — the orchestrator copies these onto every
+//                 CheckResult the check emits
+//   Run(ctx)      Returns a CheckResult. Read only the Context fields the
+//                 interface guarantees (the compiler enforces this).
+//
+// CheckResult fields your Run() populates:
+//   Rule       Always equal to Rule()
+//   Status     "pass" | "warn" | "fail" — the verdict for this run.
+//              security.StatusSkipped ("skipped") is also valid when the rule
+//              decides at runtime that it cannot evaluate this transaction
+//              (e.g. failed simulation, see "Defensive guards" below).
+//              Skipped does NOT count toward the aggregate verdict.
+//   Detail     Dynamic, run-specific explanation (e.g. "spender 0xabc is not
+//              in the known-router whitelist for chain 1")
+//   Observed   Optional structured payload for debugging / cross-validation
+//
+// Do NOT populate Name, Description, or StatusMeaning yourself — the
+// orchestrator fills them from Description() and would overwrite anything
+// you set there. Keep Run() focused on producing Status + Detail.
+//
+// AppliesTo philosophy:
+//
+//   nil                       — applies to every tx_type
+//   []string{"swap"}          — whitelist
+//   []string{}                — explicitly disabled (rule registered but
+//                                never runs; orchestrator emits "skipped")
+//
+// Prefer the metadata layer (AppliesTo) over runtime checks inside Run()
+// for tx_type filtering. The orchestrator emits a "skipped" result for
+// filtered rules so users still see them in the All Checks table.
+//
+// Defensive guards (SimulationCheck / LabelEmittingCheck / EffectCheck):
+//
+//   Sim == nil || Sim.Data == nil  → typically warn ("simulation data
+//                                     unavailable") so the rule degrades
+//                                     gracefully instead of false-failing.
+//
+//   Sim.Code != 0                  → simulation failed (revert, OOG, etc).
+//                                     If your rule's judgement depends on a
+//                                     COMPLETE trace / BalanceChanges (e.g.
+//                                     "did funds reach address X?"), return
+//                                     a result with Status = security.StatusSkipped
+//                                     and a Detail like "simulation did not
+//                                     succeed; cannot evaluate X". The
+//                                     dedicated SimulationSuccess rule
+//                                     already reports the failure on its own
+//                                     row; double-counting the same root cause
+//                                     across multiple rules pollutes the verdict.
+//                                     Skipped is NOT counted by aggregateVerdict.
+//
+//                                     EffectChecks need not guard this — the
+//                                     orchestrator already gates the entire
+//                                     Effect phase on Sim.Code == 0 and emits
+//                                     skipped for every EffectCheck.
+//
+//   Rule of thumb: "if a successful run depends on a property the simulator
+//   could only guarantee on a clean Code == 0 trace, short-circuit to
+//   skipped on failed sim." This applies to bridge_deposit_match,
+//   transfer_intent_match, and any future rule that walks the trace looking
+//   for evidence of completion.
+//
+// Description fields:
+//
+//   Name        English, plain-language label. The LLM agent translates this
+//               into the user's interaction language at render time.
+//   Description One sentence on what the rule examines and what makes its
+//               judgement meaningful.
+//   Statuses    map[string]string keyed by every status string Run() can
+//               return. At minimum "pass"; add "warn" / "fail" only if Run
+//               actually emits them. Each value is a user-facing sentence
+//               describing what that status means *for this rule*.
+//
+// Helpers available — reach for these instead of re-implementing:
+//
+//   internal/security/primitives/   ParseAddress, ParseInteger,
+//                                   ParseHexBytes, DecodeApprove,
+//                                   DecodeSetApprovalForAll, MethodID,
+//                                   MaxUint256, SelectorApprove, FirstString,
+//                                   AddrEq, DecimalRat, FormatRat,
+//                                   CommonAddress
+//   internal/security/ (exported)   NativeUSDPerWei (needs SimulationData),
+//                                   CollectLabelAddresses,
+//                                   HighRiskLabelReasons, CompactLabels
+//   internal/security/checks/common knownRouter, hasActionCall,
+//                                   copyStringMap (check-private)
+// ============================================================
+
+package checks
+
+import (
+	"fmt"
+
+	"github.com/web3/api/internal/security"
+	// Most checks reach for primitives; remove if your Run() doesn't.
+	"github.com/web3/api/internal/security/primitives"
+)
+
+// ExampleCheck demonstrates a CalldataCheck — the most common shape. Rename
+// the struct, the rule id, and the file before committing. Switch to one of
+// the other interfaces by adjusting:
+//
+//   ShapeCheck:       Run(c security.ShapeContext) security.CheckResult
+//   CalldataCheck:    Run(c security.CalldataContext) security.CheckResult
+//   SimulationCheck:  Run(c security.SimulationContext) security.CheckResult
+//   EffectCheck:      Run(c security.EffectContext) security.CheckResult
+//   LabelEmitting:    Run(c security.SimulationContext) (security.CheckResult, []security.AddressLabel)
+//
+// The DataProducingCheck slot is reserved for orchestrator-internal data
+// producers (currently only CalldataDecode). User checks should NOT use it
+// unless they have a strong reason to replace the calldata decoder.
+type ExampleCheck struct{}
+
+func (ExampleCheck) Rule() string { return "example_rule" }
+
+// AppliesTo returns nil to apply to every tx_type. Constrain via a slice
+// when the rule is only meaningful for specific transaction kinds:
+//
+//   return []string{"swap"}              // swap only
+//   return []string{"swap", "bridge"}    // swap and bridge
+//
+// Encoding tx_type filtering here (instead of inside Run) keeps the metadata
+// auditable: a glance at the rule's struct tells the reader which kinds of
+// transactions will exercise it.
+func (ExampleCheck) AppliesTo() []string { return nil }
+
+// Description supplies the rule's self-describing metadata. The orchestrator
+// copies Name and Description verbatim onto every CheckResult this rule
+// emits, and resolves Statuses[result.Status] into result.StatusMeaning so
+// the LLM agent renders a self-explaining table row without consulting any
+// separate doc.
+func (ExampleCheck) Description() security.RuleDescription {
+	return security.RuleDescription{
+		Name:        "Example Rule",
+		Description: "One sentence on what this rule examines in the decoded calldata, written so a reader who only sees this string understands the rule's intent.",
+		Statuses: map[string]string{
+			"pass": "Decoded calldata satisfied this rule's invariants.",
+			"warn": "Calldata triggers a soft signal worth surfacing; not a hard block.",
+			"fail": "Calldata clearly violates the rule's invariant; do not sign without explicit override.",
+		},
+	}
+}
+
+// Run is called once per security check request. Inputs come from the
+// Context type the interface chose; reading anything outside those fields
+// is a compile error.
+//
+// Return:
+//   - A CheckResult with Rule equal to Rule(), Status one of "pass" /
+//     "warn" / "fail", and Detail describing this specific invocation.
+//   - For LabelEmittingCheck, also return any new AddressLabel records the
+//     orchestrator should attach to Sim.Data.Trace.
+//   - For DataProducingCheck, also return the []Operation downstream
+//     CalldataChecks should iterate.
+func (ExampleCheck) Run(c security.CalldataContext) security.CheckResult {
+	findings := make([]map[string]string, 0)
+	for i, op := range c.Ops {
+		// Example: count approve calls. Replace with the real invariant.
+		spender, amount, ok := primitives.DecodeApprove(op.Data)
+		if !ok {
+			continue
+		}
+		findings = append(findings, map[string]string{
+			"operation": fmt.Sprintf("%d", i),
+			"token":     op.To.Hex(),
+			"spender":   spender.Hex(),
+			"amount":    amount.String(),
+		})
+	}
+
+	if len(findings) == 0 {
+		return security.CheckResult{
+			Rule:   "example_rule",
+			Status: "pass",
+			Detail: "no approve calls observed in the decoded calldata.",
+		}
+	}
+	return security.CheckResult{
+		Rule:     "example_rule",
+		Status:   "warn",
+		Detail:   fmt.Sprintf("%d approve call(s) observed; rule logic to be replaced.", len(findings)),
+		Observed: findings,
+	}
+}

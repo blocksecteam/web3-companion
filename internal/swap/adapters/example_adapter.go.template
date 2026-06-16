@@ -1,0 +1,249 @@
+// Template for a new protocol adapter. To use: copy and rename to yourprotocol.go.
+//
+// ============================================================
+// Adapter Development Guide
+// ============================================================
+//
+// Core flow:
+//   User request → Quote → User selects protocol → Build (construct tx) → On-chain execution
+//
+//
+// Protocol pattern:
+//   This template demonstrates the **API aggregator pattern** — fetching quotes and
+//   assembling calldata via remote HTTP APIs.
+//   Suitable for aggregators such as Odos, Kyber, OpenOcean, ParaSwap, and 1inch.
+//   Typical flow: Quote stage calls a quote API to get price + voucher; Build stage
+//   calls an assemble/build API (or reuses data from the quote response) to obtain
+//   complete calldata.
+//
+//   For the **on-chain routing pattern** — reading pool state on-chain directly,
+//   routing locally, and encoding Universal Router commands via ABI — see uniswap.go
+//   and pancake.go as reference implementations.
+//   That pattern makes no external API calls; it relies on RPC + on-chain view
+//   functions + the abi library.
+//
+//   Implementation details are dictated by your protocol; you don't need to follow
+//   this template verbatim. The key concepts the template conveys are:
+//     - The interface contract for Quote and Build (input/output types)
+//     - Usage of RawQuote as an opaque intermediary
+//     - How to declare Capabilities (Native + SupportsSlippage)
+//     - The meaning of the ApproveStyle / Permit2 values
+//
+// Interface to implement (swap.ProtocolAdapter):
+//   Name()             Returns the unique protocol identifier, lowercase, e.g. "kyber", "uniswap"
+//   SupportedChains()  Returns the list of supported chain names, e.g. ["ethereum", "base"]
+//   Capabilities()     Returns SwapCapabilities — a unified struct holding Native (wrap/unwrap
+//                      dispatch) and SupportsSlippage (advertised through /swap/protocols).
+//                      Declare SupportsSlippage true for AMM-style aggregators and false for
+//                      RFQ / limit-order / Dutch-auction style protocols. See the section below.
+//   Quote()            Fetches a quote from the protocol API (or on-chain contract), returns QuoteResult
+//   Build()            Constructs an executable transaction from QuoteResult.RawQuote, returns BuildResult
+//
+// Key type descriptions:
+//
+//   QuoteRequest (handler → adapter)
+//     Chain         Chain name, e.g. "ethereum"
+//     SourceAsset   Input token address; use "native" or EIP-155 address for native
+//     TargetAsset   Output token address
+//     Amount        Input amount as a raw integer string (e.g. USDC 1.0 → "1000000")
+//     FromAddress   User wallet address
+//     Slippage      Slippage percentage, e.g. 0.5 means 0.5%
+//
+//   QuoteResult (adapter → handler)
+//     Protocol      Adapter name
+//     SourceAsset   Passed through from QuoteRequest.SourceAsset
+//     TargetAsset   Passed through from QuoteRequest.TargetAsset
+//     InputAmount   Passed through from QuoteRequest.Amount
+//     OutputAmount  Received amount as a raw integer string, before slippage deduction
+//     RawQuote      All data needed by Build; format is adapter-defined; handler passes it back unchanged
+//     ApproveTarget erc20 → spender address; permit2 → Permit2 contract address
+//     ApproveStyle  Approve mode; see description below
+//
+//   BuildRequest (handler → adapter)
+//     Chain         Chain name
+//     FromAddress   User wallet address
+//     Quote         Equals QuoteResult.RawQuote; the adapter parses this itself
+//     SlippageBPS   Slippage in basis points (50 = 0.5%); converted by the handler from Slippage
+//
+//   BuildResult (adapter → handler)
+//     To       Target contract address (router/spender).
+//              ERC-7821 batch assembly is handled by the handler; the adapter always returns a single call.
+//     Value    Hex-encoded ETH value to attach to the swap call.
+//              Set to hex(amountIn) in two cases:
+//                - AcceptsNativeIn=true and user provides native: protocol receives ETH directly
+//                - AcceptsWETHIn=false and user provides WETH: handler has already unwrapped
+//                  WETH to ETH (UnwrapIn), so the swap call uses native
+//              In all other cases (plain ERC-20 input, or native wrapped to WETH by the handler) use "0x0".
+//     Data     Hex calldata, prefixed with "0x"
+//     GasLimit Gas limit; use defaultGasLimit (300000) if unknown
+//
+// RawQuote design principles:
+//   Flat structure; only store data needed by Build that is not already in BuildRequest.
+//   No nesting, no redundant fields (e.g. amountOut display values returned by quote but unused in build).
+//   Build reads top-level keys directly via rawQuoteMap/stringValue/intValue/boolValue.
+//
+// NativeWrap (swap.NativeWrap, four bools):
+//   Declares the native/WETH conversion operations needed before and after swap execution.
+//   This is internal handler state; the adapter never sees it: the handler derives it from
+//   adapter.Capabilities().Native and assembles deposit/withdraw calls into the ERC-7821 batch internally.
+//
+//   The adapter's only responsibility is to correctly declare Capabilities().Native to express
+//   what input/output forms the protocol accepts. Do not touch any NativeWrap logic inside Quote() or Build().
+//
+//   WrapIn:    Protocol accepts only WETH, user provides ETH  → WETH.deposit(amountIn) before swap
+//   UnwrapIn:  Protocol accepts only ETH,  user provides WETH → WETH.withdraw(amountIn) before swap
+//   WrapOut:   Protocol outputs ETH, user expects WETH        → WETH.deposit(amountOutMin) after swap
+//   UnwrapOut: Protocol outputs WETH, user expects ETH        → WETH.withdraw(amountOutMin) after swap
+//
+// ApproveStyle values (declared in QuoteResult; the handler executes approve accordingly):
+//   "erc20"   token.approve(spender, amount) — single step
+//             ApproveTarget = router/spender address (leave empty to reuse BuildResult.To)
+//   "permit2" token.approve(Permit2, amount) + Permit2.approve(token, router, amount, deadline)
+//             Uses the standard 4-parameter ABI (selector 0x87517c45)
+//             ApproveTarget = Permit2 contract address
+//
+// Registration: add one line in RegisterAllWithRPCProvider in common.go:
+//   reg.Register(NewYourAdapter())
+// ============================================================
+
+package adapters
+
+import (
+	"context"
+	"fmt"
+	"math/big"
+	"net/http"
+	"net/url"
+	"time"
+
+	"github.com/web3/api/internal/swap"
+)
+
+
+type ExampleAdapter struct {
+	client      *http.Client
+	baseURL     string
+	permit2Addr string // only needed for permit2 mode
+	extraParam  string // extra initialization parameter specific to the protocol (keep as needed)
+}
+
+func NewExampleAdapter() *ExampleAdapter {
+	return &ExampleAdapter{
+		client:      &http.Client{Timeout: 30 * time.Second},
+		baseURL:     envOrDefault("EXAMPLE_API_URL", "https://api.example.com"),
+		permit2Addr: "0x000000000022D473030F116dDEE9F6B43aC78BA3",
+		extraParam:  "some_config",
+	}
+}
+
+func (a *ExampleAdapter) Name() string              { return "example" }
+func (a *ExampleAdapter) SupportedChains() []string { return []string{"ethereum", "base"} }
+
+// Capabilities is the single capability surface the handler, /swap/protocols,
+// and the skill / agent all read. It bundles two orthogonal concerns into one
+// struct:
+//
+//   Native           — which token forms the protocol handles on each side.
+//                      Drives the handler's WETH wrap/unwrap insertion. This
+//                      example assumes a WETH-only protocol; set fields to true
+//                      based on what the protocol genuinely accepts/outputs.
+//   SupportsSlippage — does the user's --slippage actually affect what they
+//                      receive? Declare true for AMM-style aggregators where
+//                      slippage maps to an on-chain amountOutMin or a server-
+//                      side API parameter; declare false for RFQ (1inch Fusion,
+//                      CowSwap), limit-order (1inch limit order), or Dutch-
+//                      auction style protocols where a percent slippage has no
+//                      meaningful effect.
+func (a *ExampleAdapter) Capabilities() swap.SwapCapabilities {
+	return swap.SwapCapabilities{
+		Native: swap.NativeCapability{
+			AcceptsNativeIn: false, // can the protocol accept native input directly?
+			AcceptsWETHIn:   true,  // can the protocol accept WETH input directly?
+			OutputsNative:   false, // can the protocol output native directly?
+			OutputsWETH:     true,  // can the protocol output WETH directly?
+		},
+		SupportsSlippage: true,
+	}
+}
+
+// exampleQuoteResponse mirrors the protocol API response structure; fill in actual fields
+type exampleQuoteResponse struct {
+	To            string `json:"to"`
+	Value         string `json:"value"`
+	Data          string `json:"data"`
+	Gas           string `json:"gas"`
+	RouterAddress string `json:"routerAddress"`
+	AmountOut     string `json:"amountOut"`
+}
+
+func (a *ExampleAdapter) Quote(ctx context.Context, req swap.QuoteRequest) (*swap.QuoteResult, error) {
+	params := url.Values{}
+	params.Set("tokenIn", normalizeNativeToken(req.SourceAsset, eip155NativeToken))
+	params.Set("tokenOut", normalizeNativeToken(req.TargetAsset, eip155NativeToken))
+	params.Set("amountIn", req.Amount)
+	params.Set("from", req.FromAddress)
+
+	var q exampleQuoteResponse
+	if err := getJSON(ctx, a.client, a.baseURL, "/v1/quote", params, &q, nil); err != nil {
+		return nil, fmt.Errorf("example: quote: %w", err)
+	}
+	if bigString(q.AmountOut).Sign() <= 0 {
+		return nil, fmt.Errorf("example: quote returned zero output")
+	}
+
+	// Choose one ApproveStyle based on the protocol's actual requirements:
+	//   "erc20"   → ApproveTarget = router address (e.g. q.RouterAddress), or "" to reuse BuildResult.To
+	//   "permit2" → ApproveTarget = Permit2 contract address (e.g. a.permit2Addr)
+	return &swap.QuoteResult{
+		Protocol:      a.Name(),
+		SourceAsset:   req.SourceAsset,
+		TargetAsset:   req.TargetAsset,
+		InputAmount:   req.Amount,
+		OutputAmount:  q.AmountOut,
+		ApproveStyle:  "erc20",
+		ApproveTarget: q.RouterAddress,
+		RawQuote: map[string]interface{}{
+			"router":       q.RouterAddress,
+			"amount_in":    req.Amount,
+			"source_token": req.SourceAsset,
+		},
+	}, nil
+}
+
+func (a *ExampleAdapter) Build(ctx context.Context, req swap.BuildRequest) (*swap.BuildResult, error) {
+	raw := rawQuoteMap(req.Quote)
+	if raw == nil {
+		return nil, fmt.Errorf("example: invalid quote format")
+	}
+	router := stringValue(raw, "router")
+	if router == "" {
+		return nil, fmt.Errorf("example: missing router in quote")
+	}
+
+	// Call the protocol's assemble/build API to obtain the final calldata.
+	// If your protocol already returns complete calldata in the quote response, store it
+	// in RawQuote during Quote and simply read it back in Build — no second API call needed.
+	body := map[string]interface{}{
+		"tokenIn":   normalizeNativeToken(stringValue(raw, "source_token"), eip155NativeToken),
+		"amountIn":  stringValue(raw, "amount_in"),
+		"recipient": req.FromAddress,
+		"slippage":  req.SlippageBPS,
+	}
+	var b exampleQuoteResponse
+	if err := postJSON(ctx, a.client, a.baseURL, "/v1/build", body, &b, nil); err != nil {
+		return nil, fmt.Errorf("example: build: %w", err)
+	}
+	if b.To == "" || b.Data == "" {
+		return nil, fmt.Errorf("example: build returned empty calldata")
+	}
+
+	swapValue := hexFromString(b.Value)
+
+	return &swap.BuildResult{
+		To:       b.To,
+		Value:    swapValue,
+		Data:     b.Data,
+		GasLimit: parseGas(b.Gas),
+	}, nil
+}
+

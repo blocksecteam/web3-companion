@@ -1,0 +1,51 @@
+# The Web3 Companion — Docker runtime configuration.
+#
+# This file is baked into the Docker image with sensible defaults.
+# Selected values can be overridden via environment variables at runtime.
+# Normal startup does not require docker/.env or docker/config.toml.
+
+[server]
+host = "0.0.0.0"
+port = 8081
+read_timeout_seconds = 30
+write_timeout_seconds = 30
+external_url = "http://localhost:8081"
+
+[db]
+driver = "sqlite"
+dsn = "web3.db"
+
+[log]
+level = "info"
+file_path = "logs/web3.log.jsonl"
+max_size_mb = 100
+max_backups = 7
+max_age_days = 30
+
+[security.agent]
+review_mode = "always"
+allow_review_clear = true
+
+[[chains]]
+name = "ethereum"
+chain_id = 1
+native_symbol = "ETH"
+rpc_url = "https://eth.rpc.blocksec.com"
+
+[[chains]]
+name = "base"
+chain_id = 8453
+native_symbol = "ETH"
+rpc_url = "https://developer-access-mainnet.base.org"
+
+[[chains]]
+name = "polygon"
+chain_id = 137
+native_symbol = "POL"
+rpc_url = "https://rpc-mainnet.matic.quiknode.pro"
+
+[[chains]]
+name = "bsc"
+chain_id = 56
+native_symbol = "BNB"
+rpc_url = "https://bsc.rpc.blocksec.com"

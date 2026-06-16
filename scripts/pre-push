@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT"
+
+echo "[pre-push] Scanning for sensitive data..."
+
+docker run --rm -v "$PWD:/repo" -w /repo ghcr.io/gitleaks/gitleaks:v8.28.0 dir --redact --verbose .
+./scripts/check-sensitive-data.sh
+
+echo "[pre-push] Sensitive data scan clean."
+
+# --- Integration tests (optional, runs if docker/.env.integration exists) ---
+INT_ENV="$ROOT/docker/.env.integration"
+if [ -f "$INT_ENV" ]; then
+  echo ""
+  echo "[pre-push] Loading $INT_ENV..."
+  set -a
+  # shellcheck disable=SC1090
+  source "$INT_ENV"
+  set +a
+  if [ "${WEB3_INTEGRATION:-}" = "1" ]; then
+    echo "[pre-push] Running integration tests..."
+    go test ./tests/integration/... -v -count=1 -timeout=300s
+    echo "[pre-push] Integration tests passed."
+  else
+    echo "[pre-push] Skipping integration tests (WEB3_INTEGRATION != 1)"
+  fi
+else
+  echo "[pre-push] Skipping integration tests (docker/.env.integration not found)"
+fi

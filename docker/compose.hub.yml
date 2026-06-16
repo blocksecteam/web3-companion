@@ -1,0 +1,23 @@
+# Docker Compose for Web3 Companion (Docker Hub image).
+# No .env file required — all defaults are built into the image.
+# Override with environment variables as needed.
+
+name: web3-companion
+
+services:
+  web3:
+    image: blocksecteam/web3-companion:latest
+    ports:
+      - "127.0.0.1:${WEB3_PORT:-8081}:8081"
+    volumes:
+      - ${WEB3_DATA_DIR:-web3-data}:/home/web3
+    healthcheck:
+      test: ["CMD", "bun", "-e", "const r=await fetch('http://127.0.0.1:8081/health'); if(!r.ok) process.exit(1)"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  web3-data:

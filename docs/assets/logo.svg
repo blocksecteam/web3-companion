@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" fill="none">
+  <defs>
+    <linearGradient id="g1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6366f1"/>
+      <stop offset="100%" stop-color="#3b82f6"/>
+    </linearGradient>
+    <linearGradient id="g2" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#8b5cf6"/>
+      <stop offset="100%" stop-color="#06b6d4"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Shield / hexagon background -->
+  <path d="M100 16 L170 52 L170 124 L100 184 L30 124 L30 52 Z"
+        stroke="url(#g2)" stroke-width="4" fill="none" opacity="0.3"/>
+  <path d="M100 28 L160 58 L160 118 L100 170 L40 118 L40 58 Z"
+        stroke="url(#g1)" stroke-width="2.5" fill="none" opacity="0.15"/>
+
+  <!-- Chat bubble body -->
+  <rect x="52" y="60" width="96" height="64" rx="18" fill="url(#g1)"/>
+  <!-- Chat bubble tail -->
+  <path d="M68 124 L58 144 L84 124" fill="url(#g1)"/>
+
+  <!-- Two "eyes" — the companion -->
+  <circle cx="80" cy="88" r="9" fill="#22d3ee"/>
+  <circle cx="120" cy="88" r="9" fill="#22d3ee"/>
+  <circle cx="80" cy="88" r="4" fill="#0f172a"/>
+  <circle cx="120" cy="88" r="4" fill="#0f172a"/>
+
+  <!-- Blockchain cube on top -->
+  <g transform="translate(100, 38)">
+    <!-- Top face -->
+    <path d="M0 -12 L12 -6 L0 0 L-12 -6 Z" fill="#22d3ee" opacity="0.9"/>
+    <!-- Left face -->
+    <path d="M-12 -6 L0 0 L0 12 L-12 6 Z" fill="#6366f1" opacity="0.7"/>
+    <!-- Right face -->
+    <path d="M12 -6 L0 0 L0 12 L12 6 Z" fill="#3b82f6" opacity="0.8"/>
+  </g>
+
+  <!-- Orbiting ring -->
+  <ellipse cx="100" cy="100" rx="90" ry="28"
+           stroke="url(#g2)" stroke-width="2.5" fill="none"
+           opacity="0.25" transform="rotate(-20, 100, 100)"/>
+
+  <!-- Small orbit node -->
+  <circle cx="22" cy="108" r="5" fill="url(#g2)" opacity="0.6"/>
+  <circle cx="22" cy="108" r="2.5" fill="#22d3ee"/>
+</svg>

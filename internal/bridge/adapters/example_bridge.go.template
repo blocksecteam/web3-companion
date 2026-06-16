@@ -1,0 +1,255 @@
+// Template for a new bridge adapter. To use: copy and rename to yourbridge.go.
+//
+// ============================================================
+// Bridge Adapter Development Guide
+// ============================================================
+//
+// Core flow:
+//   User request → Quote (rank bridges) → User selects bridge → Build (construct tx) → On-chain execution
+//
+// Two execution modes:
+//
+//   Mode "deposit" — the user transfers tokens directly to a per-quote deposit address
+//     (e.g. Bungee with enableDepositAddress=true, Relay with useDepositAddress=true).
+//     No on-chain approve. The handler skips the approve sequence entirely. Bungee and
+//     Relay are reference implementations of this pattern.
+//
+//   Mode "approve" — the bridge pulls tokens via a router contract using ERC-20 allowance.
+//     The handler reads QuoteResult.ApproveTarget (the router/spender), checks the current
+//     on-chain allowance, and prepends ERC-20 approve calls to the build. The adapter
+//     itself never touches RPC or assembles approve calls — that is bridge package's job
+//     (bridge.ComputeApproveSequence).
+//
+// Interface to implement (bridge.Adapter):
+//   Name()              Returns the unique bridge identifier, lowercase, e.g. "stargate", "across"
+//   SupportedPairs()    Returns the cross-chain pairs this bridge can route between
+//   Capabilities()      Returns BridgeCapabilities — a unified struct holding Native (wrap/unwrap
+//                       dispatch + destination-side rejection), Approve (Mode + Style for the
+//                       handler's approve-sequence dispatch), and SupportsSlippage (advertised
+//                       through /bridge/protocols). See the section below.
+//   Quote()             Fetches a quote from the bridge API, returns BridgeQuoteResult
+//   Build()             Reads BridgeBuildRequest.Quote (the map returned by Quote()) and
+//                       assembles the executable tx; returns BridgeBuildResult
+//
+// Key type descriptions:
+//
+//   BridgeQuoteRequest (handler → adapter)
+//     FromChain      Source chain, e.g. "ethereum"
+//     ToChain        Destination chain, e.g. "base"
+//     FromToken      Input token address; "native" or canonical 0xEeee... for native
+//     ToToken        Output token address (may be empty; resolveBridgeToToken fills it)
+//     Amount         Input amount as a raw integer string (USDC 1.0 → "1000000")
+//     FromAddress    User wallet address (also the destination receiver — bridges always send back to the source wallet)
+//     Slippage       Slippage percentage, e.g. 0.5 means 0.5%
+//
+//   BridgeQuoteResult (adapter → handler)
+//     Bridge           Adapter name (must match Name())
+//     InputAmount      Raw integer string (pass-through from request)
+//     EstimatedReceive Expected output as raw integer string, before slippage deduction
+//     ApproveTarget    Spender address — REQUIRED when Capabilities().Approve.Mode == "approve"
+//                      The handler uses this to compute approve calls. Leave empty for deposit mode.
+//     DepositAddress   Per-quote deposit address — REQUIRED when Capabilities().Approve.Mode == "deposit".
+//                      Surfaced to the security agent so it can verify the simulated transfer target
+//                      matches; the user transfers funds directly to this address. Leave empty for
+//                      approve mode. Sibling field to ApproveTarget: both are quote-time, per-quote
+//                      metadata the handler consumes; only one is non-empty per mode.
+//     RawQuote         Flat map[string]interface{}; the handler passes it back to Build()
+//                      unchanged. See RawQuote design principles below.
+//
+//   Anything else the adapter wants to remember across Quote → Build (gas estimate,
+//   bridge-side request id, minimum receive, fees, ETA, …) lives inside RawQuote.
+//   Only the universal fields above are first-class on QuoteResult.
+//
+//   BridgeBuildRequest (handler → adapter)
+//     Quote        Equals BridgeQuoteResult.RawQuote; the adapter parses this with
+//                  rawQuoteMap/stringFromMap helpers. If the adapter needs its own
+//                  name inside Build(), call a.Name() — the request does not carry it.
+//
+//   BridgeBuildResult (adapter → handler)
+//     To             Target contract address (router) for the executable call
+//     Value          Decimal-string ETH value to attach to the call
+//                    Set to Amount when FromToken is native, else "0"
+//     Data           Hex calldata, prefixed with "0x"
+//     Gas            Gas limit; use defaultBridgeGas (300000) if unknown
+//
+// RawQuote design principles:
+//   Flat map[string]interface{}; only store the fields Build() actually needs.
+//   No nested structures, no redundant fields (e.g. amountOut display values returned by
+//   quote but unused in build).
+//
+//   Why flat: the value is JSON-round-trippable, so the quote can be cached, logged,
+//   or shipped to another process and still rebuilt later. A typed private struct
+//   forces a type assertion that breaks the moment Quote crosses a serialization boundary.
+//
+//   Build reads top-level keys via stringFromMap(raw, "to"), etc.
+//
+// BridgeCapabilities values — pick the combination that matches your bridge's actual behaviour:
+//
+//   deposit-address bridges (Bungee, Relay, Squid):
+//     BridgeCapabilities{
+//       Native:           NativeCapability{...},
+//       Approve:          ApproveCapability{Mode: ApproveModeDeposit},
+//       SupportsSlippage: false, // service determines destination amount off-chain
+//     }
+//
+//   ERC-20 approve aggregator bridges (LiFi, 1inch CrossChain):
+//     BridgeCapabilities{
+//       Native:           NativeCapability{...},
+//       Approve:          ApproveCapability{Mode: ApproveModeApprove, Style: ApproveStyleERC20},
+//       SupportsSlippage: true, // on-chain swap honors amountOutMin / upstream API param
+//     }
+//
+//   Permit2-style approve bridges:
+//     ApproveCapability{Mode: ApproveModeApprove, Style: ApproveStylePermit2}, SupportsSlippage: true
+//
+// For "approve" Mode, QuoteResult.ApproveTarget MUST be populated with the spender
+// address. The handler computes the on-chain allowance check + approve calls
+// (including USDT-style zero-reset) via bridge.ComputeApproveSequence — the adapter
+// itself never touches RPC for approvals.
+//
+// SupportsSlippage is a top-level field on BridgeCapabilities, NOT a property of
+// ApproveCapability. Do NOT derive it from Mode: while approve-mode bridges typically
+// honor slippage and deposit-mode bridges typically don't, this is correlation, not
+// equivalence. Counter-examples:
+//   - canonical L2 bridges (Optimism, Arbitrum Standard Bridge):
+//     Mode="approve" style contract call, but 1:1 lock-and-mint with no slippage
+//   - intent-based bridges (Across, UniswapX cross-chain):
+//     off-chain spread, no on-chain slippage enforcement
+// Declare SupportsSlippage explicitly per adapter based on actual behaviour.
+//
+// Registration: add one line in RegisterAll in common.go:
+//   reg.Register(NewYourBridge())
+// ============================================================
+
+package adapters
+
+import (
+	"context"
+	"fmt"
+	"net/url"
+	"strings"
+
+	bridge "github.com/web3/api/internal/bridge"
+)
+
+type exampleBridge struct {
+	bridgeHTTPAdapter
+}
+
+func NewExampleBridge() bridge.BridgeAdapter {
+	return &exampleBridge{
+		bridgeHTTPAdapter: newBridgeHTTPAdapter("example", "https://api.example-bridge.xyz", "EXAMPLE_BRIDGE_API_URL"),
+	}
+}
+
+func (a *exampleBridge) Name() string { return "example" }
+
+func (a *exampleBridge) SupportedPairs() []bridge.ChainPair {
+	chains := []string{"ethereum", "base", "polygon", "bsc"}
+	return bridgePairs(chains, chains)
+}
+
+// Capabilities is the single capability surface the handler, /bridge/protocols,
+// and the skill / agent all read. It bundles three orthogonal concerns into one
+// struct (see BridgeCapabilities in internal/bridge/adapter.go for full notes):
+//
+//   Native           — what input/output token forms the bridge handles on each
+//                      side. AcceptsNativeIn / AcceptsWETHIn drive source-chain
+//                      WETH wrap/unwrap; OutputsNative / OutputsWETH gate the
+//                      quote (mismatch → quote rejected, no destination post-
+//                      processing).
+//   Approve.Mode     — "approve" (router pulls via token.approve) or "deposit"
+//                      (user transfers to a deposit address). When "approve",
+//                      Quote() must populate QuoteResult.ApproveTarget.
+//   Approve.Style    — "erc20" or "permit2", only meaningful when Mode="approve".
+//   SupportsSlippage — does the user's --slippage actually do anything? Declare
+//                      explicitly per adapter; NOT a function of Approve.Mode
+//                      (canonical L2 bridges are approve-mode but 1:1 no-slippage;
+//                      intent-based bridges have off-chain spread).
+//
+// The example below picks an approve+ERC-20 bridge that supports slippage and
+// accepts/outputs both native and WETH on both sides.
+func (a *exampleBridge) Capabilities() bridge.BridgeCapabilities {
+	return bridge.BridgeCapabilities{
+		Native: bridge.NativeCapability{
+			AcceptsNativeIn: true,
+			AcceptsWETHIn:   true,
+			OutputsNative:   true,
+			OutputsWETH:     true,
+		},
+		Approve:          bridge.ApproveCapability{Mode: bridge.ApproveModeApprove, Style: bridge.ApproveStyleERC20},
+		SupportsSlippage: true,
+	}
+}
+
+// exampleQuoteResponse mirrors the bridge API response shape; fill in actual fields.
+type exampleQuoteResponse struct {
+	Router    string `json:"router"`
+	AmountOut string `json:"amountOut"`
+	Tx        struct {
+		To    string `json:"to"`
+		Value string `json:"value"`
+		Data  string `json:"data"`
+		Gas   string `json:"gas"`
+	} `json:"tx"`
+}
+
+func (a *exampleBridge) Quote(ctx context.Context, req bridge.BridgeQuoteRequest) (*bridge.BridgeQuoteResult, error) {
+	fromChainID, err := resolveBridgeChainID(req.FromChain)
+	if err != nil {
+		return nil, fmt.Errorf("example: %w", err)
+	}
+	toChainID, err := resolveBridgeChainID(req.ToChain)
+	if err != nil {
+		return nil, fmt.Errorf("example: %w", err)
+	}
+
+	params := url.Values{}
+	params.Set("fromChainId", fmt.Sprintf("%d", fromChainID))
+	params.Set("toChainId", fmt.Sprintf("%d", toChainID))
+	params.Set("fromToken", normalizeNativeToken(req.FromToken, eip155NativeToken))
+	params.Set("toToken", resolveBridgeToToken(req, eip155NativeToken))
+	params.Set("amount", req.Amount)
+	params.Set("user", req.FromAddress)
+	params.Set("recipient", receiveAddress(req))
+
+	var quote exampleQuoteResponse
+	if err := a.getJSON(ctx, "/quote", params, &quote); err != nil {
+		return nil, err
+	}
+	if quote.AmountOut == "" || quote.AmountOut == "0" {
+		return nil, fmt.Errorf("example: no route for this pair")
+	}
+
+	// RawQuote MUST be a flat map. Only include fields Build() actually reads.
+	raw := map[string]interface{}{
+		"to":    quote.Tx.To,
+		"value": quote.Tx.Value,
+		"data":  quote.Tx.Data,
+		"gas":   quote.Tx.Gas,
+	}
+
+	return &bridge.BridgeQuoteResult{
+		Bridge:           a.Name(),
+		InputAmount:      req.Amount,
+		EstimatedReceive: quote.AmountOut,
+		// Required when ApproveCapability.Mode == "approve" — the spender that the user
+		// must approve. For deposit-mode bridges, leave empty.
+		ApproveTarget: strings.ToLower(quote.Router),
+		RawQuote:      raw,
+	}, nil
+}
+
+func (a *exampleBridge) Build(_ context.Context, req bridge.BridgeBuildRequest) (*bridge.BridgeBuildResult, error) {
+	raw := rawQuoteMap(req.Quote)
+	if raw == nil {
+		return nil, fmt.Errorf("example: invalid quote format")
+	}
+	to := stringFromMap(raw, "to")
+	if to == "" {
+		return nil, fmt.Errorf("example: quote missing executable calldata")
+	}
+	// buildBridgeResult validates the fields and constructs the BridgeBuildResult.
+	// The handler prepends wrap + approve calls before wrapping into the ERC-7821 batch.
+	return buildBridgeResult("example", to, stringFromMap(raw, "value"), stringFromMap(raw, "data"), parseGas(stringFromMap(raw, "gas")))
+}

@@ -1,0 +1,53 @@
+# Build output
+dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets
+.env
+.env.cli
+*.key
+*.pem
+
+# Dependencies
+vendor/
+node_modules/
+
+# Test cache
+.test-cache/
+.tmp-go-cache/
+
+# State (user data)
+.web3/
+docker/.env
+docker/.env.integration
+docker/config.toml
+docker/data*/
+
+# Database files
+*.db
+*.db-shm
+*.db-wal
+
+# Archives
+*.zip
+doc-preview/
+.doc-preview/
+
+# Local writing references
+refs/
+
+# Local agent instructions and memory
+AGENTS.md
+agents.md
+CLAUDE.md
+claude.md
+memory/

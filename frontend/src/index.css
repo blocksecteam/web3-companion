@@ -1,0 +1,220 @@
+@import url("https://api.fontshare.com/v2/css?f[]=sentient@400,500,700&f[]=satoshi@400,500,700&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 42 38% 95%;
+    --foreground: 29 24% 14%;
+    --card: 39 44% 97%;
+    --card-foreground: 29 24% 14%;
+    --popover: 38 48% 98%;
+    --popover-foreground: 29 24% 14%;
+    --primary: 24 35% 20%;
+    --primary-foreground: 42 42% 93%;
+    --secondary: 32 27% 88%;
+    --secondary-foreground: 29 24% 14%;
+    --muted: 38 25% 88%;
+    --muted-foreground: 27 13% 40%;
+    --accent: 151 18% 76%;
+    --accent-foreground: 164 22% 19%;
+    --destructive: 4 60% 45%;
+    --destructive-foreground: 42 42% 95%;
+    --border: 32 20% 78%;
+    --input: 32 20% 78%;
+    --ring: 25 48% 43%;
+    --radius: 0.5rem;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html {
+    min-width: 320px;
+    background:
+      linear-gradient(112deg, rgba(141, 98, 63, 0.08), transparent 32%),
+      linear-gradient(215deg, rgba(84, 121, 103, 0.1), transparent 38%),
+      hsl(var(--background));
+    color: hsl(var(--foreground));
+  }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    font-family: "Satoshi", ui-sans-serif, system-ui, sans-serif;
+    letter-spacing: 0;
+  }
+
+  button,
+  input,
+  textarea {
+    font: inherit;
+  }
+
+  ::selection {
+    background: hsl(24 38% 64% / 0.35);
+  }
+}
+
+@layer utilities {
+  .paper-grain {
+    position: relative;
+  }
+
+  .paper-grain::before {
+    background-image:
+      linear-gradient(rgba(62, 47, 36, 0.035) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(62, 47, 36, 0.025) 1px, transparent 1px);
+    background-size: 42px 42px;
+    content: "";
+    inset: 0;
+    mask-image: linear-gradient(to bottom, black, transparent 80%);
+    pointer-events: none;
+    position: fixed;
+    z-index: 0;
+  }
+
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .safe-bottom {
+    padding-bottom: max(1rem, env(safe-area-inset-bottom));
+  }
+
+  .assistant-markdown p {
+    margin: 0.65rem 0;
+  }
+
+  .assistant-markdown p:first-child,
+  .assistant-markdown ul:first-child,
+  .assistant-markdown ol:first-child,
+  .assistant-markdown pre:first-child {
+    margin-top: 0;
+  }
+
+  .assistant-markdown p:last-child,
+  .assistant-markdown ul:last-child,
+  .assistant-markdown ol:last-child,
+  .assistant-markdown pre:last-child {
+    margin-bottom: 0;
+  }
+
+  .assistant-markdown ul,
+  .assistant-markdown ol {
+    margin: 0.75rem 0;
+    padding-left: 1.35rem;
+  }
+
+  .assistant-markdown ul {
+    list-style: disc;
+  }
+
+  .assistant-markdown ol {
+    list-style: decimal;
+  }
+
+  .assistant-markdown li {
+    margin: 0.35rem 0;
+  }
+
+  .assistant-markdown strong {
+    font-weight: 700;
+  }
+
+  .assistant-markdown a {
+    color: hsl(var(--primary));
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+
+  .assistant-markdown code:not(pre code) {
+    border-radius: 0.25rem;
+    background: hsl(var(--muted) / 0.74);
+    padding: 0.1rem 0.28rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.88em;
+  }
+
+  .assistant-markdown pre {
+    margin: 0.85rem 0;
+    max-width: 100%;
+    overflow: auto;
+    border-radius: 0.45rem;
+    border: 1px solid hsl(var(--border));
+    background: hsl(var(--muted) / 0.55);
+    padding: 0.85rem;
+    font-size: 0.82rem;
+    line-height: 1.6;
+  }
+
+  .assistant-markdown blockquote {
+    margin: 0.85rem 0;
+    border-left: 2px solid hsl(var(--border));
+    padding-left: 0.85rem;
+    color: hsl(var(--muted-foreground));
+  }
+
+  .assistant-markdown table {
+    margin: 0.85rem 0;
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9em;
+  }
+
+  .assistant-markdown th,
+  .assistant-markdown td {
+    border: 1px solid hsl(var(--border));
+    padding: 0.45rem 0.55rem;
+    text-align: left;
+  }
+
+  .assistant-markdown th {
+    background: hsl(var(--muted) / 0.6);
+    font-weight: 700;
+  }
+
+  .streaming-status-mark {
+    animation: status-mark 1700ms ease-in-out infinite;
+    border: 1px solid currentColor;
+    border-radius: 999px;
+    height: 0.5rem;
+    width: 0.5rem;
+  }
+
+  .streaming-dot {
+    animation: status-dot 1300ms ease-in-out infinite;
+    background: currentColor;
+    border-radius: 999px;
+    height: 0.22rem;
+    opacity: 0.38;
+    width: 0.22rem;
+  }
+
+  @keyframes status-mark {
+    0%,
+    100% {
+      opacity: 0.48;
+      transform: scale(0.9);
+    }
+    50% {
+      opacity: 0.9;
+      transform: scale(1);
+    }
+  }
+
+  @keyframes status-dot {
+    0%,
+    100% {
+      opacity: 0.32;
+      transform: translateY(0);
+    }
+    45% {
+      opacity: 1;
+      transform: translateY(-0.12rem);
+    }
+  }
+}

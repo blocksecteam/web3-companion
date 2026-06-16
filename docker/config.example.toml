@@ -1,0 +1,54 @@
+# Optional Web3 Companion service configuration template.
+#
+# Normal Docker startup uses docker/config.docker.toml baked into the image and
+# does not require docker/config.toml. Use this file only as a reference when
+# building a custom image/configuration. Keep secrets out of TOML files.
+
+[server]
+host = "0.0.0.0"
+port = 8081
+read_timeout_seconds = 30
+write_timeout_seconds = 30
+external_url = "http://localhost:8081"
+
+[db]
+driver = "sqlite"
+dsn = "web3.db"
+
+[log]
+level = "info"
+# Logs are always JSONL on console and in the rotating file.
+# Override file_path with an absolute path or a path relative to WEB3_WORKDIR.
+file_path = "logs/web3.log.jsonl"
+max_size_mb = 100
+max_backups = 7
+max_age_days = 30
+
+[security.agent]
+review_mode = "always" # always | warn
+# allow_review_clear: when true, a safe Web3 Security Agent review may clear the backend intent for SSM signing; backend policy and Passkey approval still apply.
+allow_review_clear = true
+
+[[chains]]
+name = "ethereum"
+chain_id = 1
+native_symbol = "ETH"
+rpc_url = "${WEB3_RPC_ETHEREUM_URL}"
+
+[[chains]]
+name = "base"
+chain_id = 8453
+native_symbol = "ETH"
+rpc_url = "${WEB3_RPC_BASE_URL}"
+
+[[chains]]
+name = "polygon"
+chain_id = 137
+native_symbol = "POL"
+rpc_url = "${WEB3_RPC_POLYGON_URL}"
+
+[[chains]]
+name = "bsc"
+chain_id = 56
+native_symbol = "BNB"
+rpc_url = "${WEB3_RPC_BSC_URL}"
