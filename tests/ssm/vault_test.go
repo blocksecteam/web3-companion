@@ -325,8 +325,8 @@ func TestVaultSoftDeleteRetainsKeyAndRecreateIsolatesGeneration(t *testing.T) {
 	if err := v.DeleteWallet(context.Background(), userID, first.WalletID); err != nil {
 		t.Fatalf("soft delete first wallet: %v", err)
 	}
-	if _, err := os.Stat(firstKeyFile); err != nil {
-		t.Fatalf("soft delete should retain key file %s: %v", firstKeyFile, err)
+	if _, err := os.Stat(firstKeyFile); !os.IsNotExist(err) {
+		t.Fatalf("deleted wallet key file should be securely removed: %v", err)
 	}
 	if _, err := v.SignTransaction(context.Background(), userID, first.WalletID, types.NewTx(&types.DynamicFeeTx{
 		ChainID: big.NewInt(1),
@@ -367,9 +367,6 @@ func TestVaultSoftDeleteRetainsKeyAndRecreateIsolatesGeneration(t *testing.T) {
 	}
 	if _, err := os.Stat(second.KeyFile); err != nil {
 		t.Fatalf("second key file missing: %v", err)
-	}
-	if _, err := os.Stat(firstKeyFile); err != nil {
-		t.Fatalf("first key file should still be retained after recreate: %v", err)
 	}
 }
 

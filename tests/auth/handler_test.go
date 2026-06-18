@@ -11,8 +11,10 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -21,6 +23,8 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/blocksecteam/web3-companion/internal/config"
+
+	"fmt"
 
 	authpkg "github.com/blocksecteam/web3-companion/internal/auth"
 	"github.com/blocksecteam/web3-companion/internal/passkey"
@@ -77,8 +81,10 @@ func TestRegisterIssuesPasskeySetupTokenDirectly(t *testing.T) {
 	if err := db.Where("id = ?", userID).First(&user).Error; err != nil {
 		t.Fatalf("load user: %v", err)
 	}
-	if user.TempToken != tempToken || user.TempTokenExpiresAt == nil {
-		t.Fatalf("stored temp token mismatch: token=%q expires=%v", user.TempToken, user.TempTokenExpiresAt)
+	expectedHash := sha256.Sum256([]byte(strings.TrimSpace(tempToken)))
+	expectedHex := hex.EncodeToString(expectedHash[:])
+	if user.TempToken != expectedHex || user.TempTokenExpiresAt == nil {
+		t.Fatalf("stored temp token should be SHA-256 hash: got=%q want=%q expires=%v", user.TempToken, expectedHex, user.TempTokenExpiresAt)
 	}
 	if got := user.TempTokenExpiresAt.Sub(before); got < 14*time.Minute || got > 16*time.Minute {
 		t.Fatalf("temp token ttl = %s, want about 15m", got)
@@ -165,19 +171,14 @@ func TestRegisterCreatesDefaultWalletForEachUser(t *testing.T) {
 func TestPasskeySetupRejectsExpiredTempToken(t *testing.T) {
 	r, db := setupAuthRouterWithPasskeys(t)
 	expired := time.Now().Add(-time.Minute)
-	user := storage.User{
-		ID:                 "user_expired_temp_token",
-		Email:              "expired-temp@example.com",
-		Name:               "expired-temp@example.com",
-		TempToken:          "expired-temp-token",
-		TempTokenExpiresAt: &expired,
-	}
+	plainToken := "expired-temp-token"
+	user := testUserWithTempToken("user_expired_temp_token", "expired-temp@example.com", plainToken, &expired)
 	if err := db.Create(&user).Error; err != nil {
 		t.Fatalf("create user: %v", err)
 	}
 
 	w := testutil.DoRequest(r, "POST", "/auth/passkey-setup", map[string]string{
-		"temp_token": user.TempToken,
+		"temp_token": plainToken,
 	}, nil)
 	if w.Code != http.StatusGone {
 		t.Fatalf("expired temp token setup = %d, want 410: %s", w.Code, w.Body.String())
@@ -241,19 +242,14 @@ func TestConfirmURLPrefersFrontendConfirmRoute(t *testing.T) {
 func TestPasskeySetupClaimModeKeepsResultClaimableForCLI(t *testing.T) {
 	r, db := setupAuthRouterWithPasskeys(t)
 	tempExpiresAt := time.Now().Add(15 * time.Minute)
-	user := storage.User{
-		ID:                 "user_claim_mode",
-		Email:              "claim-mode@example.com",
-		Name:               "claim-mode@example.com",
-		TempToken:          "temp-claim-token",
-		TempTokenExpiresAt: &tempExpiresAt,
-	}
+	plainToken := "temp-claim-token"
+	user := testUserWithTempToken("user_claim_mode", "claim-mode@example.com", plainToken, &tempExpiresAt)
 	if err := db.Create(&user).Error; err != nil {
 		t.Fatalf("create user: %v", err)
 	}
 
 	w := testutil.DoRequest(r, "POST", "/auth/passkey-setup", map[string]string{
-		"temp_token":  user.TempToken,
+		"temp_token":  plainToken,
 		"result_mode": "claim",
 	}, nil)
 	if w.Code != http.StatusOK {
@@ -295,7 +291,7 @@ func TestPasskeySetupClaimModeKeepsResultClaimableForCLI(t *testing.T) {
 	}
 
 	w = testutil.DoRequest(r, "POST", "/auth/passkey-result", map[string]string{
-		"temp_token":   user.TempToken,
+		"temp_token":   plainToken,
 		"challenge_id": challengeID,
 	}, map[string]string{"Origin": "http://localhost"})
 	if w.Code != http.StatusOK {
@@ -310,7 +306,7 @@ func TestPasskeySetupClaimModeKeepsResultClaimableForCLI(t *testing.T) {
 	assertAuthSessionScope(t, db, claimResp["session_id"].(string), authpkg.ClientBrowser, authpkg.ScopeBrowser)
 
 	w = testutil.DoRequest(r, "POST", "/auth/passkey-result", map[string]string{
-		"temp_token":   user.TempToken,
+		"temp_token":   plainToken,
 		"challenge_id": challengeID,
 	}, nil)
 	if w.Code != http.StatusUnauthorized {
@@ -320,12 +316,8 @@ func TestPasskeySetupClaimModeKeepsResultClaimableForCLI(t *testing.T) {
 
 func TestPasskeyResultReturnsRefreshTokenForCLIClaim(t *testing.T) {
 	r, db := setupAuthRouterWithPasskeys(t)
-	user := storage.User{
-		ID:                 "user_cli_claim_mode",
-		Email:              "cli-claim@example.com",
-		TempToken:          "temp-cli-claim",
-		TempTokenExpiresAt: timePtr(time.Now().Add(15 * time.Minute)),
-	}
+	plainToken := "temp-cli-claim"
+	user := testUserWithTempToken("user_cli_claim_mode", "cli-claim@example.com", plainToken, timePtr(time.Now().Add(15*time.Minute)))
 	if err := db.Create(&user).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -353,7 +345,7 @@ func TestPasskeyResultReturnsRefreshTokenForCLIClaim(t *testing.T) {
 	}
 
 	w := testutil.DoRequest(r, "POST", "/auth/passkey-result", map[string]string{
-		"temp_token":   user.TempToken,
+		"temp_token":   plainToken,
 		"challenge_id": challengeID,
 	}, nil)
 	if w.Code != http.StatusOK {
@@ -374,19 +366,14 @@ func TestPasskeyResultReturnsRefreshTokenForCLIClaim(t *testing.T) {
 func TestPasskeyVerifyDoesNotReturnAPIKeyWithoutExplicitResultMode(t *testing.T) {
 	r, db := setupAuthRouterWithPasskeys(t)
 	tempExpiresAt := time.Now().Add(15 * time.Minute)
-	user := storage.User{
-		ID:                 "user_default_claim_mode",
-		Email:              "default-claim@example.com",
-		Name:               "default-claim@example.com",
-		TempToken:          "temp-default-claim",
-		TempTokenExpiresAt: &tempExpiresAt,
-	}
+	plainToken := "temp-default-claim"
+	user := testUserWithTempToken("user_default_claim_mode", "default-claim@example.com", plainToken, &tempExpiresAt)
 	if err := db.Create(&user).Error; err != nil {
 		t.Fatalf("create user: %v", err)
 	}
 
 	w := testutil.DoRequest(r, "POST", "/auth/passkey-setup", map[string]string{
-		"temp_token": user.TempToken,
+		"temp_token": plainToken,
 	}, nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("passkey setup = %d: %s", w.Code, w.Body.String())
@@ -526,14 +513,9 @@ func timePtr(t time.Time) *time.Time {
 func TestPasskeyResultRejectsExpiredApprovedChallenge(t *testing.T) {
 	r, db := setupAuthRouterWithPasskeys(t)
 	tempExpiresAt := time.Now().Add(15 * time.Minute)
-	user := storage.User{
-		ID:                 "user_expired_claim",
-		Email:              "expired-claim@example.com",
-		Name:               "expired-claim@example.com",
-		TempToken:          "temp-expired-claim",
-		TempTokenExpiresAt: &tempExpiresAt,
-		PasskeySetup:       true,
-	}
+	plainToken := "temp-expired-claim"
+	user := testUserWithTempToken("user_expired_claim", "expired-claim@example.com", plainToken, &tempExpiresAt)
+	user.PasskeySetup = true
 	if err := db.Create(&user).Error; err != nil {
 		t.Fatalf("create user: %v", err)
 	}
@@ -550,7 +532,7 @@ func TestPasskeyResultRejectsExpiredApprovedChallenge(t *testing.T) {
 	}
 
 	w := testutil.DoRequest(r, "POST", "/auth/passkey-result", map[string]string{
-		"temp_token":   user.TempToken,
+		"temp_token":   plainToken,
 		"challenge_id": "ch_expired_claim",
 	}, nil)
 	if w.Code != http.StatusGone {
@@ -698,3 +680,23 @@ func testCBORLen(major byte, n uint64) []byte {
 		return out
 	}
 }
+
+func hashTempToken(token string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(token)))
+	return hex.EncodeToString(sum[:])
+}
+
+func testUserWithTempToken(id, email, plainToken string, expiresAt *time.Time) storage.User {
+	return storage.User{
+		ID:                 id,
+		Email:              email,
+		Name:               email,
+		TempToken:          hashTempToken(plainToken),
+		TempTokenExpiresAt: expiresAt,
+	}
+}
+
+// Helpers to avoid repeating the hash pattern: tests should use testUserWithTempToken
+// to create users, and send the plaintext token in requests. The DB stores the hash;
+// the handler hashes the incoming token before lookup.
+var _ = fmt.Sprint // keep fmt import

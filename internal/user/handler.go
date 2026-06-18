@@ -8,7 +8,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"fmt"
+	"net/http"
+	"net/url"
+
 	"github.com/gin-gonic/gin"
 
 	"github.com/blocksecteam/web3-companion/internal/auth"
@@ -17,9 +19,6 @@ import (
 	"github.com/blocksecteam/web3-companion/internal/portfolio"
 	"github.com/blocksecteam/web3-companion/internal/ssm/vault"
 	"gorm.io/gorm"
-	"net/http"
-	"net/url"
-	"time"
 )
 
 type Handler struct {
@@ -67,7 +66,7 @@ func WithWalletAssetInspector(inspector *portfolio.AssetInspector) HandlerOption
 func randomID() string {
 	b := make([]byte, 12)
 	if _, err := rand.Read(b); err != nil {
-		return fmt.Sprintf("%d", time.Now().UnixNano())
+		panic("crypto/rand: " + err.Error())
 	}
 	return base64.RawURLEncoding.EncodeToString(b)
 }

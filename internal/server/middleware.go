@@ -7,10 +7,13 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -249,5 +252,63 @@ func rotatingLogWriter(cfg config.LogConfig, workdir string) io.Writer {
 		MaxBackups: maxBackups,
 		MaxAge:     maxAge,
 		Compress:   true,
+	}
+}
+
+type ipWindow struct {
+	count    atomic.Int64
+	resetAt  atomic.Int64
+	windowNs int64
+}
+
+type rateLimiterState struct {
+	mu      sync.Mutex
+	windows map[string]*ipWindow
+}
+
+func (s *rateLimiterState) allow(ip string, maxRequests int64, windowNs int64) bool {
+	s.mu.Lock()
+	w, ok := s.windows[ip]
+	if !ok {
+		w = &ipWindow{windowNs: windowNs}
+		w.resetAt.Store(time.Now().UnixNano() + windowNs)
+		s.windows[ip] = w
+	}
+	s.mu.Unlock()
+
+	now := time.Now().UnixNano()
+	if now >= w.resetAt.Load() {
+		w.count.Store(0)
+		w.resetAt.Store(now + w.windowNs)
+	}
+	return w.count.Add(1) <= maxRequests
+}
+
+func RateLimiter(maxRequests int64, window time.Duration) gin.HandlerFunc {
+	state := &rateLimiterState{windows: make(map[string]*ipWindow)}
+	windowNs := window.Nanoseconds()
+
+	go func() {
+		for range time.Tick(5 * time.Minute) {
+			now := time.Now().UnixNano()
+			state.mu.Lock()
+			for ip, w := range state.windows {
+				if now >= w.resetAt.Load()+windowNs {
+					delete(state.windows, ip)
+				}
+			}
+			state.mu.Unlock()
+		}
+	}()
+
+	return func(c *gin.Context) {
+		ip := c.ClientIP()
+		if !state.allow(ip, maxRequests, windowNs) {
+			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
+				"error": gin.H{"code": "rate_limited", "message": "Too many requests"},
+			})
+			return
+		}
+		c.Next()
 	}
 }

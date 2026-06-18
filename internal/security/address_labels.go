@@ -100,7 +100,11 @@ func isSystemAddress(addr string) bool {
 }
 
 func CollectLabelAddresses(req CheckRequest, ops []Operation, fundFlow []string) []string {
+	owner := strings.ToLower(strings.TrimSpace(req.Owner))
 	seen := make(map[string]bool)
+	if owner != "" {
+		seen[owner] = true
+	}
 	out := make([]string, 0, 2+len(ops)+len(fundFlow))
 	add := func(addr string) {
 		addr = strings.ToLower(strings.TrimSpace(addr))
@@ -110,7 +114,6 @@ func CollectLabelAddresses(req CheckRequest, ops []Operation, fundFlow []string)
 		seen[addr] = true
 		out = append(out, addr)
 	}
-	add(req.Owner)
 	add(req.To)
 	for _, op := range ops {
 		add(op.To.Hex())

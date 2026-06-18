@@ -85,7 +85,7 @@ func setupRouter(cfg *config.Config, db *gorm.DB, companionManager *companion.Ma
 	return r
 }
 func RegisterBrowserRoutes(r *gin.Engine, cfg *config.Config, db *gorm.DB, v *vault.Vault, passkeyServer *passkey.Server, companionManager *companion.Manager, tokenService *auth.TokenService, jwtSecret string, llmService *settings.LLMService, vc *VersionChecker, runtimeRPCs ...*settings.RuntimeRPC) {
-	auth.RegisterRoutes(r, db, passkeyServer, auth.WithTokenService(tokenService), auth.WithCompanionEnvironment(companionManager), auth.WithVault(v))
+	auth.RegisterRoutes(r, db, passkeyServer, auth.WithTokenService(tokenService), auth.WithCompanionEnvironment(companionManager), auth.WithVault(v), auth.WithRateLimiter(RateLimiter(10, time.Minute)))
 	settingsService := settings.NewService(db)
 	runtimeRPC := runtimeRPCFromArgs(cfg, settingsService, runtimeRPCs...)
 	companion.RegisterRoutes(r, db, companionManager, companion.WithTokenService(tokenService), companion.WithJWTSecret(jwtSecret), companion.WithRuntimeProviderResolver(func(_ context.Context) (companion.LLMProviderConfig, error) {

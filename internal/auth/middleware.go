@@ -254,6 +254,8 @@ func bearerFromRequest(c *gin.Context) string {
 
 func newRequestID() string {
 	b := make([]byte, 16)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		panic("crypto/rand: " + err.Error())
+	}
 	return base64.RawURLEncoding.EncodeToString(b)
 }

@@ -167,6 +167,16 @@ func (h *Handler) Check(c *gin.Context) {
 		return
 	}
 
+	if intent.SecurityResultJSON != "" {
+		var cached CheckResponse
+		if err := json.Unmarshal([]byte(intent.SecurityResultJSON), &cached); err == nil {
+			cached.TransactionID = intent.TransactionID
+			cached.Status = intent.Status
+			c.JSON(http.StatusOK, cached)
+			return
+		}
+	}
+
 	checkReq := CheckRequestFromIntent(intent)
 	resp, err := h.checkTransaction(c.Request.Context(), checkReq)
 	if err != nil {

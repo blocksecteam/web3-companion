@@ -104,7 +104,7 @@ func (v *Vault) CreateWallet(ctx context.Context, userID, walletID string) (*sto
 	}
 	if err := v.db.Create(w).Error; err != nil {
 		v.secureDelete(keyFile)
-		_ = os.Remove(metaFile)
+		v.secureDelete(metaFile)
 		return nil, fmt.Errorf("db create wallet: %w", err)
 	}
 	w.WalletID = walletID
@@ -164,6 +164,8 @@ func (v *Vault) DeleteWallet(ctx context.Context, userID, walletID string) error
 	if err := v.softDeleteWalletRecords(userID, wallet); err != nil {
 		return fmt.Errorf("delete wallet records: %w", err)
 	}
+	v.secureDelete(wallet.KeyFile)
+	v.secureDelete(v.metaFilePathForGeneration(userID, walletID, wallet.Generation))
 	return nil
 }
 

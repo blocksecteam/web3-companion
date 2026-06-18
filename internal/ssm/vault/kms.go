@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -14,6 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/kms"
 	"github.com/aws/aws-sdk-go-v2/service/kms/types"
+	"golang.org/x/crypto/hkdf"
 
 	"github.com/blocksecteam/web3-companion/internal/config"
 )
@@ -61,9 +63,11 @@ func NewEncryptedFileKMSClient(rootKey string) (*KMSClient, error) {
 	if len([]byte(rootKey)) < 32 {
 		return nil, fmt.Errorf("WEB3_SSM_KEY must be at least 32 bytes")
 	}
-	sum := sha256.Sum256([]byte("web3-companion:ssm:v1:" + rootKey))
-	kek := make([]byte, len(sum))
-	copy(kek, sum[:])
+	r := hkdf.New(sha256.New, []byte(rootKey), []byte("web3-companion:ssm"), []byte("kek-derivation:v1"))
+	kek := make([]byte, 32)
+	if _, err := io.ReadFull(r, kek); err != nil {
+		return nil, fmt.Errorf("derive KEK: %w", err)
+	}
 	return &KMSClient{localKEK: kek}, nil
 }
 

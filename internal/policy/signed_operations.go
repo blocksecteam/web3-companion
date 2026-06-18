@@ -66,7 +66,7 @@ func (s *Service) RecordSignedOperation(op SignedOperation) error {
 }
 
 func validateSignedReservation(tx *gorm.DB, event storage.PolicyUsageEvent) error {
-	if event.Decision != string(DecisionAuto) || event.PriceUnknown {
+	if event.PriceUnknown {
 		return nil
 	}
 	now := event.CreatedAt
@@ -84,21 +84,31 @@ func validateSignedReservation(tx *gorm.DB, event storage.PolicyUsageEvent) erro
 	if err := tx.First(&version, "policy_definition_version_id = ?", instance.PolicyDefinitionVersionID).Error; err != nil {
 		return err
 	}
-	if version.Mode != "auto" || !version.AutoSignEnabled {
-		return nil
-	}
 	usage, err := usageForInstanceTx(tx, instance, event.UsageDate, now)
 	if err != nil {
 		return err
 	}
-	if limitExceeded(event.AmountUSD, version.AutoSignMaxPerTxUSD) {
+
+	if limitExceeded(event.AmountUSD, version.MaxPerTransactionUSD) {
 		return ErrPolicyBlocked
 	}
-	if sumLimitExceeded(version.AutoSignDailyLimitUSD, usage.AutoSignDailyUsedUSD, usage.AutoSignPendingUSD, event.AmountUSD) {
+	if transferBucket(event.TxType) && sumLimitExceeded(version.DailyTransferLimitUSD, usage.DailyTransferUsedUSD, usage.PendingTransferUSD, event.AmountUSD) {
 		return ErrPolicyBlocked
 	}
-	if version.AutoSignMaxCountDay > 0 && usage.AutoSignCountToday+usage.AutoSignPendingCount >= version.AutoSignMaxCountDay {
+	if tradeBucket(event.TxType) && sumLimitExceeded(version.DailyTradeLimitUSD, usage.DailyTradeUsedUSD, usage.PendingTradeUSD, event.AmountUSD) {
 		return ErrPolicyBlocked
+	}
+
+	if event.Decision == string(DecisionAuto) && version.Mode == "auto" && version.AutoSignEnabled {
+		if limitExceeded(event.AmountUSD, version.AutoSignMaxPerTxUSD) {
+			return ErrPolicyBlocked
+		}
+		if sumLimitExceeded(version.AutoSignDailyLimitUSD, usage.AutoSignDailyUsedUSD, usage.AutoSignPendingUSD, event.AmountUSD) {
+			return ErrPolicyBlocked
+		}
+		if version.AutoSignMaxCountDay > 0 && usage.AutoSignCountToday+usage.AutoSignPendingCount >= version.AutoSignMaxCountDay {
+			return ErrPolicyBlocked
+		}
 	}
 	return nil
 }

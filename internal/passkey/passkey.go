@@ -588,7 +588,9 @@ func (s *Server) registrationTimeout() time.Duration {
 
 func randomBytes(n int) []byte {
 	b := make([]byte, n)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		panic("crypto/rand: " + err.Error())
+	}
 	return b
 }
 

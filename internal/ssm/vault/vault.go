@@ -167,7 +167,9 @@ func (v *Vault) secureDelete(path string) error {
 		return nil
 	}
 	randomData := make([]byte, info.Size())
-	rand.Read(randomData)
+	if _, err := rand.Read(randomData); err != nil {
+		return fmt.Errorf("secure random fill: %w", err)
+	}
 	if err := os.WriteFile(path, randomData, 0o600); err != nil {
 		ZeroBytes(randomData)
 		return err

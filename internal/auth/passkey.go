@@ -5,6 +5,7 @@ package auth
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -36,7 +37,7 @@ func (h *AuthHandler) PasskeySetup(c *gin.Context) {
 	}
 
 	var user storage.User
-	if err := h.db.Where("temp_token = ?", req.TempToken).First(&user).Error; err != nil {
+	if err := h.db.Where("temp_token = ?", hashRefreshToken(req.TempToken)).First(&user).Error; err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"error": gin.H{"code": "invalid_token", "message": "Invalid or expired temp token"},
 		})
@@ -74,8 +75,9 @@ func (h *AuthHandler) PasskeySetup(c *gin.Context) {
 
 	ch, opts, err := h.passkeys.BeginRegistration(user.ID, user.Email)
 	if err != nil {
+		slog.Error("passkey: begin registration failed", "user_id", user.ID, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": gin.H{"code": "passkey_challenge_failed", "message": err.Error()},
+			"error": gin.H{"code": "passkey_challenge_failed", "message": "Failed to begin passkey registration"},
 		})
 		return
 	}
@@ -145,8 +147,9 @@ func (h *AuthHandler) PasskeyVerify(c *gin.Context) {
 	var payload map[string]interface{}
 	_ = json.Unmarshal([]byte(ch.PayloadJSON), &payload)
 	if err := h.passkeys.CompleteRegistrationWithAttestation(ch.UserID, req.ChallengeID, req.CredentialID, req.ClientDataJSON, req.AttestationObject, req.DeviceName); err != nil {
+		slog.Error("passkey: attestation verification failed", "challenge_id", req.ChallengeID, "error", err)
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": gin.H{"code": "invalid_attestation", "message": err.Error()},
+			"error": gin.H{"code": "invalid_attestation", "message": "Passkey verification failed"},
 		})
 		return
 	}
@@ -198,7 +201,8 @@ func (h *AuthHandler) PasskeyResult(c *gin.Context) {
 	}
 
 	var user storage.User
-	if err := h.db.Where("id = ? AND temp_token = ?", ch.UserID, req.TempToken).First(&user).Error; err != nil {
+	hashedTemp := hashRefreshToken(req.TempToken)
+	if err := h.db.Where("id = ? AND temp_token = ?", ch.UserID, hashedTemp).First(&user).Error; err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"error": gin.H{"code": "invalid_token", "message": "Invalid or already redeemed temp token"},
 		})
@@ -223,7 +227,7 @@ func (h *AuthHandler) PasskeyResult(c *gin.Context) {
 
 	claimed := false
 	if err := h.db.Transaction(func(tx *gorm.DB) error {
-		result := tx.Model(&storage.User{}).Where("id = ? AND temp_token = ? AND temp_token_expires_at > ?", user.ID, req.TempToken, time.Now()).Updates(map[string]interface{}{
+		result := tx.Model(&storage.User{}).Where("id = ? AND temp_token = ? AND temp_token_expires_at > ?", user.ID, hashedTemp, time.Now()).Updates(map[string]interface{}{
 			"temp_token":            "",
 			"temp_token_expires_at": nil,
 		})

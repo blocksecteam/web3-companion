@@ -32,6 +32,7 @@ type routeConfig struct {
 	tokenService         *TokenService
 	companionEnvironment CompanionEnvironment
 	vault                *vault.Vault
+	rateLimiter          gin.HandlerFunc
 }
 
 type RouteOption func(*routeConfig)
@@ -42,6 +43,10 @@ func WithTokenService(svc *TokenService) RouteOption {
 
 func WithVault(v *vault.Vault) RouteOption {
 	return func(cfg *routeConfig) { cfg.vault = v }
+}
+
+func WithRateLimiter(mw gin.HandlerFunc) RouteOption {
+	return func(cfg *routeConfig) { cfg.rateLimiter = mw }
 }
 
 type CompanionEnvironment interface {
@@ -63,6 +68,9 @@ func RegisterRoutes(r *gin.Engine, db *gorm.DB, pk *passkey.Server, opts ...Rout
 	h := &AuthHandler{db: db, passkeys: pk, tokens: cfg.tokenService, companionEnvironment: cfg.companionEnvironment, vault: cfg.vault}
 
 	auth := r.Group("/auth")
+	if cfg.rateLimiter != nil {
+		auth.Use(cfg.rateLimiter)
+	}
 	{
 		auth.POST("/register", h.Register)
 		auth.POST("/refresh", h.Refresh)
@@ -90,13 +98,17 @@ type AuthHandler struct {
 
 func generateToken() string {
 	b := make([]byte, 32)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		panic("crypto/rand: " + err.Error())
+	}
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
 func generateID() string {
 	b := make([]byte, 12)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		panic("crypto/rand: " + err.Error())
+	}
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
@@ -147,9 +159,8 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	var existing storage.User
 	if err := h.db.Where("email = ?", email).First(&existing).Error; err == nil {
 		if existing.PasskeySetup {
-			c.JSON(http.StatusConflict, gin.H{
-				"error": gin.H{"code": "already_registered",
-					"message": "This email is already registered. Use your existing Passkey to authenticate."},
+			c.JSON(http.StatusOK, authapi.RegisterResponse{
+				Status: "existing_account",
 			})
 			return
 		}
@@ -215,7 +226,7 @@ func (h *AuthHandler) issueRegistrationTempToken(userID string) (string, error) 
 	tempToken := generateToken()
 	expiresAt := time.Now().Add(15 * time.Minute)
 	err := h.db.Model(&storage.User{}).Where("id = ?", userID).Updates(map[string]interface{}{
-		"temp_token":            tempToken,
+		"temp_token":            hashRefreshToken(tempToken),
 		"temp_token_expires_at": expiresAt,
 	}).Error
 	return tempToken, err
@@ -271,15 +282,17 @@ func (h *AuthHandler) LoginOptions(c *gin.Context) {
 
 	ch, err := h.passkeys.CreateChallenge(user.ID, "passkey_login", "")
 	if err != nil {
+		slog.Error("login: create challenge failed", "email", email, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": gin.H{"code": "login_challenge_failed", "message": err.Error()},
+			"error": gin.H{"code": "login_challenge_failed", "message": "Failed to create login challenge"},
 		})
 		return
 	}
 	opts, err := h.passkeys.BeginAuthentication(user.ID, ch.ChallengeID)
 	if err != nil {
+		slog.Error("login: begin authentication failed", "email", email, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": gin.H{"code": "login_challenge_failed", "message": err.Error()},
+			"error": gin.H{"code": "login_challenge_failed", "message": "Failed to create login challenge"},
 		})
 		return
 	}
@@ -324,8 +337,9 @@ func (h *AuthHandler) LoginVerify(c *gin.Context) {
 	}
 
 	if err := h.passkeys.VerifyAssertion(ch.UserID, req.ChallengeID, req.CredentialID, req.ClientDataJSON, req.AuthenticatorData, req.Signature); err != nil {
+		slog.Error("login: passkey verification failed", "challenge_id", req.ChallengeID, "error", err)
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": gin.H{"code": "verification_failed", "message": err.Error()},
+			"error": gin.H{"code": "verification_failed", "message": "Passkey verification failed"},
 		})
 		return
 	}

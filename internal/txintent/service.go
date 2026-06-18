@@ -579,7 +579,7 @@ func (s *Service) now() time.Time {
 func randomHex(n int) string {
 	b := make([]byte, n)
 	if _, err := rand.Read(b); err != nil {
-		return fmt.Sprintf("%d", time.Now().UnixNano())
+		panic("crypto/rand: " + err.Error())
 	}
 	return hex.EncodeToString(b)
 }

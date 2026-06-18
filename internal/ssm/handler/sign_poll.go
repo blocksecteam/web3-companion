@@ -190,14 +190,14 @@ func (h *SignHandler) PollSign(c *gin.Context) {
 			"to": req.To, "chain": req.Chain, "wallet": wallet.Address,
 		},
 	}
-	if err := h.recordSignedOperation(userID, req, policyResult, resp.TxHash, policyservice.DecisionWebAuthn); err != nil {
+	if err := h.recordSignedOperation(userID, req, policyResult, resp.TxHash, policyResult.Decision); err != nil {
 		h.failSigningChallenge(challengeID)
 		logAudit(c, "SIGN_FAILED", "HIGH", req.WalletID, "policy usage record failed: "+err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{"code": "policy_usage_record_failed", "message": err.Error()}})
 		return
 	}
 	if _, err := intentSvc.StoreSignedTx(c.Request.Context(), req.TransactionID, userID, txintent.SignedTx{
-		Hex: signedHex, Hash: resp.TxHash, PolicyID: policyResult.Policy.PolicyID, PolicyDecision: string(policyservice.DecisionWebAuthn),
+		Hex: signedHex, Hash: resp.TxHash, PolicyID: policyResult.Policy.PolicyID, PolicyDecision: string(policyResult.Decision),
 	}); err != nil {
 		h.failSigningChallenge(challengeID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{"code": "transaction_intent_sign_failed", "message": err.Error()}})

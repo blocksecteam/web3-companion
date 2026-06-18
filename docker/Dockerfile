@@ -59,7 +59,11 @@ RUN cd companion \
     && bun install --frozen-lockfile --production \
     && cp node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/claude /usr/local/bin/claude \
     && chmod +x /usr/local/bin/claude \
-    && mkdir -p /home/web3 \
+    && rm -rf src tsconfig.json \
+    && find node_modules -type d -name test -exec rm -rf {} + 2>/dev/null; \
+       find node_modules -type d -name tests -exec rm -rf {} + 2>/dev/null; \
+       find node_modules -type f \( -name '*.test.*' -o -name '*.spec.*' -o -name '.gitattributes' \) -delete 2>/dev/null; \
+       mkdir -p /home/web3 \
     && chown -R web3:web3 /home/web3 /opt/web3 \
     && chmod 0755 /usr/local/bin/docker-entrypoint.sh
 
