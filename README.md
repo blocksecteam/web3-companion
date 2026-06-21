@@ -34,6 +34,7 @@ Read the full [Security Design](docs/SECURITY_DESIGN.md) for the threat model, a
 ## Quick Start
 
 ```bash
+docker pull blocksecteam/web3-companion
 docker run -d --name web3-companion -p 8081:8081 -v web3-data:/home/web3 blocksecteam/web3-companion
 ```
 
@@ -74,10 +75,16 @@ All four AWS variables must be set together. Without them, wallet keys are encry
 <summary>Custom port</summary>
 
 ```bash
-docker run -d --name web3-companion -p 9090:8081 -v web3-data:/home/web3 blocksecteam/web3-companion
+docker run -d --name web3-companion \
+  -p 9090:8081 \
+  -v web3-data:/home/web3 \
+  -e WEB3_EXTERNAL_URL=http://localhost:9090 \
+  blocksecteam/web3-companion
 ```
 
 The container always listens on port 8081 internally. Map it to any host port with `-p <host>:8081`.
+
+**Important:** When using a non-default port, you **must** set `WEB3_EXTERNAL_URL` to match. Passkeys are bound to the exact origin (scheme + host + port) — if `WEB3_EXTERNAL_URL` doesn't match the URL in your browser, Passkey registration and authentication will fail with "origin mismatch."
 </details>
 
 <details>

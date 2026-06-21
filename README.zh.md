@@ -34,6 +34,7 @@ Web3 Companion 采用不同的方法。AI Agent 可以完成 Web3 高级用户�
 ## 快速开始
 
 ```bash
+docker pull blocksecteam/web3-companion
 docker run -d --name web3-companion -p 8081:8081 -v web3-data:/home/web3 blocksecteam/web3-companion
 ```
 
@@ -74,10 +75,16 @@ docker run -d --name web3-companion \
 <summary>自定义端口</summary>
 
 ```bash
-docker run -d --name web3-companion -p 9090:8081 -v web3-data:/home/web3 blocksecteam/web3-companion
+docker run -d --name web3-companion \
+  -p 9090:8081 \
+  -v web3-data:/home/web3 \
+  -e WEB3_EXTERNAL_URL=http://localhost:9090 \
+  blocksecteam/web3-companion
 ```
 
 容器内部始终监听 8081 端口。通过 `-p <主机端口>:8081` 映射到任意主机端口。
+
+**重要：** 使用非默认端口时，**必须**设置 `WEB3_EXTERNAL_URL` 与浏览器访问地址一致。Passkey 绑定到完整的 origin（协议 + 主机 + 端口）—— 如果 `WEB3_EXTERNAL_URL` 与浏览器 URL 不匹配，Passkey 注册和认证会因 "origin mismatch" 失败。
 </details>
 
 <details>
