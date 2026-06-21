@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-This frontend is the first step toward a personal Web3 Companion: a warm, security-conscious chatbot that uses natural language to drive wallet, portfolio, swap, bridge, chain, and security workflows.
+This frontend is the browser interface for Web3 Companion — a secure agentic wallet that uses natural language to drive wallet, portfolio, swap, bridge, chain, and security workflows.
 
 The current implementation is split between the frontend client and the backend-managed companion runtime:
 

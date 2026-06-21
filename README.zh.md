@@ -4,10 +4,10 @@
 
 <h1 align="center">Web3 Companion</h1>
 
-<p align="center"><strong>安全的 Web3 AI Agent</strong></p>
+<p align="center"><strong>安全的 Agentic Wallet</strong></p>
 
 <p align="center">
-  <em>一个能自主执行链上操作的 AI Agent —— 拥有它永远无法触及的私钥，和它永远无法更改的策略。</em>
+  <em>一个 AI 原生钱包，能自主执行链上操作 —— Agent 永远无法触及私钥，也永远无法更改签名策略。</em>
 </p>
 
 <p align="center">
@@ -19,9 +19,9 @@
 
 ## 为什么选择 Web3 Companion
 
-Web3 AI Agent 可以自动化链上操作 —— 但大多数 Agent 把你的私钥放在与处理不可信内容相同的进程中。一次 prompt injection、一个恶意技能、一个被攻破的依赖，你的资金就永久消失了。
+AI Agent 可以自动化链上操作 —— 但大多数 Agentic Wallet 把你的私钥放在与处理不可信内容相同的进程中。一次 prompt injection、一个恶意技能、一个被攻破的依赖，你的资金就永久消失了。
 
-Web3 Companion 采用不同的方法。AI Agent 可以完成 Web3 高级用户需要的一切 —— 查看资产、准备转账、报价兑换和跨链、运行安全分析、签名交易 —— 但它在三个独立的安全边界内运行：
+Web3 Companion 是一个安全的 Agentic Wallet，采用完全不同的方法。AI Agent 可以完成 Web3 高级用户需要的一切 —— 查看资产、准备转账、报价兑换和跨链、运行安全分析、签名交易 —— 但它在三个独立的安全边界内运行：
 
 - **Agent 永远无法触碰私钥。** 密钥存在于隔离的安全签名模块中。Agent 使用意图 ID 工作，而不是密钥材料。
 - **签名遵循代码强制的策略。** 单笔上限、每日预算、收款人白名单。Agent 无法修改这些 —— 更改需要你的 Passkey。

@@ -2,7 +2,7 @@
 
 [English](USER_GUIDE.md)
 
-本指南面向希望自托管并使用 Web3 Companion 的普通用户。
+本指南面向希望自托管并使用 Web3 Companion 的普通用户。Web3 Companion 是一个安全的 Agentic Wallet，支持自主链上操作。
 
 Web3 Companion 运行在你自己的机器或服务器上。它提供一个浏览器应用，用于查看资产、管理钱包、执行 Web3 操作、进行交易安全审查，并在敏感签名前要求 Passkey 确认。
 

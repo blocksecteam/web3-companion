@@ -4,10 +4,10 @@
 
 <h1 align="center">Web3 Companion</h1>
 
-<p align="center"><strong>The Secure Web3 AI Agent</strong></p>
+<p align="center"><strong>The Secure Agentic Wallet</strong></p>
 
 <p align="center">
-  <em>An AI agent that operates on-chain autonomously — with private keys it can never reach and policies it can never change.</em>
+  <em>An AI-native wallet that operates on-chain autonomously — with private keys the agent can never reach and policies it can never change.</em>
 </p>
 
 <p align="center">
@@ -19,9 +19,9 @@
 
 ## Why Web3 Companion
 
-Web3 AI agents can automate on-chain work — but most of them hold your private keys in the same process that reads untrusted content. One prompt injection, one malicious skill, one compromised dependency, and your funds are gone. Permanently.
+AI agents can automate on-chain work — but most agentic wallets hold your private keys in the same process that reads untrusted content. One prompt injection, one malicious skill, one compromised dependency, and your funds are gone. Permanently.
 
-Web3 Companion takes a different approach. The AI agent can do everything a Web3 power user needs — inspect assets, prepare transfers, quote swaps and bridges, run security analysis, and sign transactions — but it operates within three independent security boundaries:
+Web3 Companion is a secure agentic wallet that takes a different approach. The AI agent can do everything a Web3 power user needs — inspect assets, prepare transfers, quote swaps and bridges, run security analysis, and sign transactions — but it operates within three independent security boundaries:
 
 - **The agent never touches private keys.** Keys live in an isolated Secure Signature Module. The agent works with intent IDs, not key material.
 - **Signing follows code-enforced policies.** Per-transaction caps, daily budgets, recipient allowlists. The agent cannot modify these — changes require your Passkey.

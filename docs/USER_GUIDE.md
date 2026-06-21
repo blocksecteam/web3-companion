@@ -2,7 +2,7 @@
 
 [简体中文](USER_GUIDE.zh.md)
 
-This manual explains how to install, configure, and use Web3 Companion as a self-hosted Web3 wallet and assistant.
+This manual explains how to install, configure, and use Web3 Companion — a secure agentic wallet for autonomous on-chain operations.
 
 Web3 Companion runs in your own environment. It gives you a browser app for portfolio review, wallet management, policy control, transaction preparation, security review, and Passkey-confirmed signing.
 
