@@ -17,6 +17,8 @@
 
 <p align="center"><a href="README.zh.md">简体中文</a></p>
 
+**Disclaimer: This project has not been subjected to security testing or formal auditing and may contain bugs or security vulnerabilities. It is intended for development and testing purposes only. Do not deploy it in a production environment.**   
+
 ## Why Web3 Companion
 
 AI agents can automate on-chain work — but most agentic wallets hold your private keys in the same process that reads untrusted content. One prompt injection, one malicious skill, one compromised dependency, and your funds are gone. Permanently.
